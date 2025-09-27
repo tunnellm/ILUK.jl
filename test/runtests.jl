@@ -1,6 +1,7 @@
 using Test
 using ILUK
 using SparseArrays
+using LinearAlgebra
 
 @testset "ILUK.jl" begin
 
@@ -45,7 +46,11 @@ using SparseArrays
         @test nnz(L0) - n + nnz(U0) == nnz(A)
 
         L1, U1 = symbolic_ilu_k(A, 1)
-        @test nnz(L1) - n + nnz(U1) > nnz(A)  # Should have fill
+        # For tridiagonal, ILU(1) may not have fill
+        @test nnz(L1) - n + nnz(U1) >= nnz(A)
     end
+
+    # Include numerical tests
+    include("test_numerical.jl")
 
 end

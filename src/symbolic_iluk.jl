@@ -102,7 +102,7 @@ function fill_symbolic!(L_counts, U_counts, A, k, count_only,
 
         # Initialize with pattern from A
         for j_idx in A.colptr[i]:(A.colptr[i+1]-1)
-            j = A.rowid[j_idx]
+            j = A.rowval[j_idx]
             if j < i
                 # L part: j is in L[i,:]
                 level[j] = 0
