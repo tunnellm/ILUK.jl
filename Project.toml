@@ -1,0 +1,11 @@
+name = "ILUK"
+uuid = "8b5b43b3-c2f7-49eb-97b3-de4a4853213c"
+authors = ["tunnellm <tunnellm@mail.gvsu.edu>"]
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[compat]
+julia = "1.6"

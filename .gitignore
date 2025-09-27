@@ -1,0 +1,16 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+Manifest.toml
+
+# System
+.DS_Store
+
+# Editor
+*.swp
+*~
+.vscode/
+
+# Test artifacts
+/test/tmp/
