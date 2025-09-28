@@ -11,6 +11,7 @@ include("fill_symbolic.jl")
 include("numerical_iluk.jl")  # Standard implementation (corrected)
 
 # Symmetric factorization
+include("symbolic_iluk_symmetric.jl")  # Corrected symmetric symbolic factorization
 include("symmetric_iluk.jl")
 
 # Robust factorization with adaptive shifts

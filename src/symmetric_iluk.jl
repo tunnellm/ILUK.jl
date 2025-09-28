@@ -88,10 +88,8 @@ function symbolic_ilu_k_symmetric(A::SparseMatrixCSC{T}, k::Integer) where {T}
     L_nzval = ones(T, length(L_rowval))  # Will be filled with actual values later
     L = SparseMatrixCSC(n, n, L_colptr, L_rowval, L_nzval)
 
-    # D is just a diagonal matrix - we'll store it as a vector
-    D = ones(T, n)  # Will be filled with actual values later
-
-    return L, D
+    # Use the corrected implementation from symbolic_iluk_symmetric.jl
+    return symbolic_ilu_k_symmetric_new(A, k)
 end
 
 """
@@ -271,7 +269,9 @@ This is more efficient than general ILU(k) for symmetric matrices as it only
 computes and stores the lower triangular factor L and diagonal D.
 """
 function ilu_k_symmetric(A::SparseMatrixCSC{T}, k::Integer; shift::Real=T(0)) where {T}
-    L, D = symbolic_ilu_k_symmetric(A, k)
+    L = symbolic_ilu_k_symmetric(A, k)
+    n = size(A, 1)
+    D = zeros(T, n)
     fill_symbolic_symmetric!(A, L, D)
     numerical_ilu_k_symmetric!(L, D, shift)
     return L, D

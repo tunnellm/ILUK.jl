@@ -28,8 +28,40 @@ intermediate vertices that are all less than min(i,j), and the path length
 function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
 
     if k == 0
+        # For ILU(0), use pattern of A but ensure diagonal is always present
         L = tril(A)
         U = triu(A)
+
+        # Add missing diagonal entries
+        n = size(A, 1)
+        for j = 1:n
+            # Check if L has diagonal entry
+            has_diag = false
+            for idx in L.colptr[j]:(L.colptr[j+1]-1)
+                if L.rowval[idx] == j
+                    has_diag = true
+                    break
+                end
+            end
+            if !has_diag
+                # Add diagonal entry to L (requires rebuilding the sparse matrix)
+                L = L + sparse([j], [j], [1.0], n, n)
+            end
+
+            # Check if U has diagonal entry
+            has_diag = false
+            for idx in U.colptr[j]:(U.colptr[j+1]-1)
+                if U.rowval[idx] == j
+                    has_diag = true
+                    break
+                end
+            end
+            if !has_diag
+                # Add diagonal entry to U
+                U = U + sparse([j], [j], [1.0], n, n)
+            end
+        end
+
         L.nzval .= 1.0
         U.nzval .= 1.0
         return L, U
