@@ -1,16 +1,17 @@
 """
     ilu_k(A::SparseMatrixCSC, k::Integer; kwargs...)
 
-Compute the incomplete LU factorization with fill level k.
+Compute the incomplete LU factorization with fill level k using adaptive shifting.
 
 # Arguments
 - `A`: Input sparse matrix
 - `k`: Fill level (k ≥ 0)
 
 # Keyword Arguments
-- `shift::Real=0.0`: Fixed diagonal shift for stability
-- `adaptive::Bool=false`: Use adaptive shifting (robust for difficult matrices)
-- `min_pivot::Real=1e-10`: Minimum acceptable pivot (for adaptive mode)
+- `min_pivot::Real=1e-10`: Minimum acceptable pivot magnitude
+- `α_min::Real=1e-10`: Initial shift value when failure occurs
+- `α_increase_factor::Real=10.0`: Multiplicative factor for shift increase
+- `max_attempts::Int=3`: Maximum number of shift increases
 
 # Returns
 - `L`: Lower triangular factor with unit diagonal
@@ -20,23 +21,16 @@ Compute the incomplete LU factorization with fill level k.
 ```julia
 using SparseArrays
 A = spdiagm(-1 => -ones(9), 0 => 2*ones(10), 1 => -ones(9))
-
-# Standard factorization
 L, U = ilu_k(A, 1)
-
-# Robust factorization with adaptive shifting
-L, U = ilu_k(A, 1, adaptive=true)
 ```
 
-# Algorithm
-Combines symbolic factorization (BFS-based pattern computation) with
-numerical factorization (Crout method) following Hysom & Pothen (1999).
-When `adaptive=true`, uses LimitedLDL-inspired shift strategy for robustness.
+Uses LimitedLDL-inspired adaptive shift strategy for robustness.
 """
 function ilu_k(A::SparseMatrixCSC{T}, k::Integer;
-              shift::Real=T(0),
-              adaptive::Bool=false,
-              min_pivot::Real=T(1e-10)) where {T}
+              min_pivot::Real=T(1e-10),
+              α_min::Real=T(1e-10),
+              α_increase_factor::Real=10.0,
+              max_attempts::Int=3) where {T}
 
     # Step 1: Compute symbolic pattern
     L, U = symbolic_ilu_k(A, k)
@@ -44,43 +38,105 @@ function ilu_k(A::SparseMatrixCSC{T}, k::Integer;
     # Step 2: Fill with values from A
     fill_symbolic!(A, L, U)
 
-    # Step 3: Perform numerical factorization
-    if adaptive
-        # Use robust version with adaptive shifting
-        result = numerical_ilu_k_lldl!(L, U;
-                                       min_pivot=min_pivot,
-                                       ensure_positive=false)
-        if !result.success
-            @warn "Adaptive factorization failed after $(result.attempts) attempts"
-        end
-    else
-        # Use standard version with fixed shift
-        numerical_ilu_k!(L, U, shift)
+    # Step 3: Perform numerical factorization with adaptive shifting
+    result = numerical_ilu_k_lldl!(L, U;
+                                   min_pivot=min_pivot,
+                                   α_min=α_min,
+                                   α_increase_factor=α_increase_factor,
+                                   max_attempts=max_attempts,
+                                   ensure_positive=false)
+    if !result.success
+        @warn "Adaptive factorization failed after $(result.attempts) attempts with final shift $(result.final_shift)"
     end
 
     return L, U
 end
 
 """
-    ilu_k!(L::SparseMatrixCSC, U::SparseMatrixCSC, A::SparseMatrixCSC, k::Integer; shift=0.0)
+    symbolic_ldlt_k(A::SparseMatrixCSC, k::Integer)
 
-In-place version of ilu_k that reuses pre-allocated L and U matrices.
+Compute symbolic LDL^T factorization pattern for symmetric matrices.
+Only computes L (lower triangular) since U = L^T for symmetric factorization.
 
-Useful when solving multiple systems with the same sparsity pattern.
+# Arguments
+- `A`: Symmetric sparse matrix
+- `k`: Fill level (k ≥ 0)
+
+# Returns
+- `L`: Sparse lower triangular matrix with symbolic pattern
+
+# Example
+```julia
+using SparseArrays
+A = sparse(Symmetric(spdiagm(-1 => -ones(9), 0 => 2*ones(10), 1 => -ones(9))))
+L = symbolic_ldlt_k(A, 1)
+```
+
+More efficient than symbolic_ilu_k for symmetric matrices.
 """
-function ilu_k!(
-    L::SparseMatrixCSC{T},
-    U::SparseMatrixCSC{T},
-    A::SparseMatrixCSC{T},
-    k::Integer;
-    shift::Real=T(0)
-) where {T}
+function symbolic_ldlt_k(A::SparseMatrixCSC{T}, k::Integer) where {T}
+    return symbolic_ilu_k_symmetric_new(A, k)
+end
 
-    # Fill with values from A
-    fill_symbolic!(A, L, U)
+"""
+    ldlt_k(A::SparseMatrixCSC, k::Integer; kwargs...)
 
-    # Perform numerical factorization
-    numerical_ilu_k!(L, U, shift)
+Compute incomplete LDL^T factorization for symmetric matrices with adaptive shifting.
 
-    return L, U
+# Arguments
+- `A`: Symmetric sparse matrix
+- `k`: Fill level (k ≥ 0)
+
+# Keyword Arguments
+- `min_pivot::Real=1e-10`: Minimum acceptable pivot (positive value for SPD systems)
+- `α_min::Real=1e-10`: Initial shift value when failure occurs
+- `α_increase_factor::Real=10.0`: Multiplicative factor for shift increase
+- `max_attempts::Int=3`: Maximum number of shift increases
+- `ensure_positive::Bool=false`: Force positive pivots (set true for SPD systems)
+
+# Returns
+- `L`: Lower triangular factor with unit diagonal
+- `D`: Diagonal factor
+
+# Example
+```julia
+using SparseArrays
+A = sparse(Symmetric(spdiagm(-1 => -ones(9), 0 => 2*ones(10), 1 => -ones(9))))
+
+# General symmetric matrix
+L, D = ldlt_k(A, 1)
+
+# SPD matrix (ensures positive pivots)
+L, D = ldlt_k(A, 1, ensure_positive=true)
+```
+
+More efficient than ilu_k for symmetric matrices. Uses LimitedLDL-inspired shifting.
+"""
+function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
+               min_pivot::Real=T(1e-10),
+               α_min::Real=T(1e-10),
+               α_increase_factor::Real=10.0,
+               max_attempts::Int=3,
+               ensure_positive::Bool=false) where {T}
+
+    # Step 1: Compute symbolic pattern (only L)
+    L = symbolic_ldlt_k(A, k)
+
+    # Step 2: Initialize D and fill with values from A
+    n = size(A, 1)
+    D = zeros(T, n)
+    fill_symbolic_symmetric_new!(A, L, D)
+
+    # Step 3: Perform numerical factorization with adaptive shifting
+    result = symmetric_ilu_k_lldl!(L, D;
+                                   min_pivot=min_pivot,
+                                   α_min=α_min,
+                                   α_increase_factor=α_increase_factor,
+                                   max_attempts=max_attempts,
+                                   ensure_positive=ensure_positive)
+    if !result.success
+        @warn "Adaptive symmetric factorization failed after $(result.attempts) attempts with final shift $(result.final_shift)"
+    end
+
+    return L, D
 end

@@ -1,7 +1,8 @@
 """
-    Numerical ILU(k) with LimitedLDL-Inspired Shift Strategy
+    Numerical ILU(k) and LDLT(k) with Adaptive Shifting
 
-Implements a shift strategy inspired by LimitedLDLFactorizations.jl:
+Robust numerical factorization with adaptive shift strategy.
+Retry logic inspired by LimitedLDLFactorizations.jl:
 - Sign-aware shifting for indefinite systems
 - Exponential shift increase on failure
 - Complete restart with shifted matrix
@@ -257,7 +258,8 @@ function symmetric_ilu_k_lldl!(
     min_pivot::Real=T(1e-10),
     α_min::Real=T(1e-10),
     α_increase_factor::Real=10.0,
-    max_attempts::Int=3
+    max_attempts::Int=3,
+    ensure_positive::Bool=false
 ) where {T}
 
     n = size(L, 1)
@@ -281,10 +283,14 @@ function symmetric_ilu_k_lldl!(
         # Apply shift to diagonal elements
         if α > 0
             for j = 1:n
-                if diag_signs[j] >= 0
-                    D[j] += α
+                if ensure_positive
+                    D[j] += α  # Always positive shift for SPD
                 else
-                    D[j] -= α  # Negative diagonals shift down
+                    if diag_signs[j] >= 0
+                        D[j] += α
+                    else
+                        D[j] -= α  # Negative diagonals shift down
+                    end
                 end
             end
         end

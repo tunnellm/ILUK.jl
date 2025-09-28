@@ -4,34 +4,24 @@ using SparseArrays
 using LinearAlgebra
 
 # Core symbolic factorization
-include("symbolic_iluk.jl")
-include("fill_symbolic.jl")
+include("symbolic_iluk.jl")        # General ILU(k) symbolic patterns
+include("fill_symbolic.jl")        # Initialize L,U with A values
 
-# Numerical factorization implementations
-include("numerical_iluk.jl")  # Standard implementation (corrected)
+# Numerical factorization
+include("ilu_k_basic.jl")          # Standard Crout-based ILU(k)
+include("ilu_k_adaptive.jl")       # Adaptive shifting (LimitedLDL-inspired)
 
 # Symmetric factorization
-include("symbolic_iluk_symmetric.jl")  # Corrected symmetric symbolic factorization
-include("symmetric_iluk.jl")
+include("ldlt_k_symbolic.jl")      # Specialized symmetric symbolic patterns
+include("ldlt_k_basic.jl")         # Standard LDL^T factorization
 
-# Robust factorization with adaptive shifts
-include("numerical_iluk_lldl_inspired.jl")
+# Public API
+include("ilu_k.jl")               # Main interface functions
 
-# Main interface
-include("ilu_k.jl")
-
-# Public API exports
-export symbolic_ilu_k
-export ilu_k
-export fill_symbolic!
-
-# Symmetric matrix support
-export symbolic_ilu_k_symmetric
-export ilu_k_symmetric
-
-# Advanced options (for users who need control)
-export numerical_ilu_k!  # In-place version
-export numerical_ilu_k_lldl!  # Robust version with shift options
-export symmetric_ilu_k_lldl!  # Robust symmetric version
+# Clean API - only 4 functions
+export symbolic_ilu_k  # General symbolic factorization
+export ilu_k          # General numerical factorization with adaptive shifting
+export symbolic_ldlt_k # Symmetric symbolic factorization
+export ldlt_k         # Symmetric numerical factorization with adaptive shifting
 
 end # module ILUK
