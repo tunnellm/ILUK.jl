@@ -19,12 +19,14 @@ Fields:
 - `D`: Diagonal vector
 - `shift`: Diagonal shift applied (0 if none needed)
 - `success`: Whether factorization succeeded
+- `flops`: Total floating-point operations (assuming FMA)
 """
 struct LDLFactorization{T}
     L::SparseMatrixCSC{T,Int}
     D::Vector{T}
     shift::T
     success::Bool
+    flops::Int
 end
 
 """
@@ -39,6 +41,7 @@ Fields:
 - `U`: Strictly upper triangular factor (SparseMatrixCSC)
 - `shift`: Diagonal shift applied (0 if none needed)
 - `success`: Whether factorization succeeded
+- `flops`: Total floating-point operations (assuming FMA)
 """
 struct LDUFactorization{T}
     L::SparseMatrixCSC{T,Int}
@@ -46,6 +49,7 @@ struct LDUFactorization{T}
     U::SparseMatrixCSC{T,Int}
     shift::T
     success::Bool
+    flops::Int
 end
 
 # =============================================================================
@@ -103,7 +107,7 @@ function ilu_k(A::SparseMatrixCSC{T}, k::Integer;
         @warn "Adaptive factorization failed after $(result.attempts) attempts with final shift $(result.shift)"
     end
 
-    return LDUFactorization(L, D, U, result.shift, result.success)
+    return LDUFactorization(L, D, U, result.shift, result.success, result.flops)
 end
 
 """
@@ -159,7 +163,7 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
         @warn "Adaptive symmetric factorization failed after $(result.attempts) attempts with final shift $(result.shift)"
     end
 
-    return LDLFactorization(L, D, result.shift, result.success)
+    return LDLFactorization(L, D, result.shift, result.success, result.flops)
 end
 
 # =============================================================================

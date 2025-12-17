@@ -65,6 +65,7 @@ function numeric_ilu_k!(
     # Shift parameters
     α_current = T(α)
     attempt = 0
+    total_flops = 0
 
     while attempt <= max_attempts
         # Reset to original values
@@ -84,10 +85,11 @@ function numeric_ilu_k!(
         end
 
         # Attempt factorization (zero allocations inside)
-        success, failed_column = attempt_factorization!(L, U, D, min_pivot, work)
+        success, failed_column, flops = attempt_factorization!(L, U, D, min_pivot, work)
+        total_flops += flops
 
         if success
-            return (success=true, shift=α_current, attempts=attempt, failed_column=0)
+            return (success=true, shift=α_current, attempts=attempt, failed_column=0, flops=total_flops)
         end
 
         # Factorization failed, increase shift
@@ -95,7 +97,7 @@ function numeric_ilu_k!(
         attempt += 1
     end
 
-    return (success=false, shift=α_current, attempts=attempt, failed_column=-1)
+    return (success=false, shift=α_current, attempts=attempt, failed_column=-1, flops=total_flops)
 end
 
 """
@@ -106,9 +108,7 @@ L is strictly lower triangular, U is strictly upper triangular, D is diagonal.
 
 Computes A ≈ (I + L) * diag(D) * (I + U) on the sparsity pattern.
 
-For column j, the update formula is:
-  work[i] -= L[i,k] * work[k]  for all i > k in column k of L
-where work[k] = D[k] * U[k,j] after processing rows < k.
+Returns (success, failed_column, flops) where flops assumes FMA.
 """
 function attempt_factorization!(
     L::SparseMatrixCSC{T},
@@ -126,31 +126,29 @@ function attempt_factorization!(
     Urowval = U.rowval
     Uval = U.nzval
 
+    flops = 0
+
     @inbounds for j = 1:n
         # Scatter column j into work
-        # U column j: rows < j (strictly upper), contains original A[k,j] values
         for p = Ucolptr[j]:(Ucolptr[j+1]-1)
             work[Urowval[p]] = Uval[p]
         end
-        # L column j: rows > j (strictly lower), contains original A[i,j] values
         for p = Lcolptr[j]:(Lcolptr[j+1]-1)
             work[Lrowval[p]] = Lval[p]
         end
-        # Diagonal: D[j] contains original A[j,j]
         work[j] = D[j]
 
         # Apply updates from columns k < j
-        # After this loop: work[k] = D[k] * U[k,j], work[j] = D[j], work[i>j] = L[i,j] * D[j]
         for p = Ucolptr[j]:(Ucolptr[j+1]-1)
             k = Urowval[p]
-            # work[k] has been updated by all m < k, so it equals D[k] * U[k,j]
             work_k = work[k]
 
             # Apply update FROM column k to all rows i > k in L column k
             for q = Lcolptr[k]:(Lcolptr[k+1]-1)
                 i = Lrowval[q]
-                work[i] -= Lval[q] * work_k
+                work[i] -= Lval[q] * work_k  # 1 FMA
             end
+            flops += Lcolptr[k+1] - Lcolptr[k]
         end
 
         # Get diagonal pivot
@@ -158,7 +156,7 @@ function attempt_factorization!(
 
         # Check pivot (allow indefinite, only fail on near-zero)
         if abs(d_jj) < min_pivot
-            return false, j
+            return false, j, flops
         end
 
         # Store diagonal
@@ -167,22 +165,24 @@ function attempt_factorization!(
         # Gather U column j: U[k,j] = work[k] / D[k]
         for p = Ucolptr[j]:(Ucolptr[j+1]-1)
             k = Urowval[p]
-            Uval[p] = work[k] / D[k]
+            Uval[p] = work[k] / D[k]  # 1 div
             work[k] = zero(T)
         end
+        flops += Ucolptr[j+1] - Ucolptr[j]
 
         # Gather L column j: L[i,j] = work[i] / D[j]
         for p = Lcolptr[j]:(Lcolptr[j+1]-1)
             row = Lrowval[p]
-            Lval[p] = work[row] / d_jj
+            Lval[p] = work[row] / d_jj  # 1 div
             work[row] = zero(T)
         end
+        flops += Lcolptr[j+1] - Lcolptr[j]
 
         # Clear diagonal from work
         work[j] = zero(T)
     end
 
-    return true, 0
+    return true, 0, flops
 end
 
 """
@@ -229,6 +229,7 @@ function numeric_ldlt_k!(
     # Shift parameters
     α_current = T(α)
     attempt = 0
+    total_flops = 0
 
     while attempt <= max_attempts
         # Reset to original values
@@ -247,11 +248,12 @@ function numeric_ldlt_k!(
         end
 
         # Attempt factorization (zero allocations inside)
-        success, failed_column = attempt_symmetric_factorization!(L, D, min_pivot, ensure_positive, work, list, indf)
+        success, failed_column, flops = attempt_symmetric_factorization!(L, D, min_pivot, ensure_positive, work, list, indf)
+        total_flops += flops
 
         if success
             return (success=true, shift=α_current, attempts=attempt,
-                   failed_column=0, all_positive=all(D .> 0))
+                   failed_column=0, all_positive=all(D .> 0), flops=total_flops)
         end
 
         # Factorization failed, increase shift
@@ -260,7 +262,7 @@ function numeric_ldlt_k!(
     end
 
     return (success=false, shift=α_current, attempts=attempt,
-           failed_column=-1, all_positive=false)
+           failed_column=-1, all_positive=false, flops=total_flops)
 end
 
 """
@@ -270,10 +272,7 @@ Attempt symmetric LDL^T factorization. Zero allocations.
 L is strictly lower triangular (no diagonal), D is the diagonal.
 Uses linked-list approach from LimitedLDLFactorizations.
 
-Work arrays (pre-allocated, size n):
-- work: dense accumulator
-- list: linked list of columns
-- indf: current position in each column
+Returns (success, failed_column, flops) where flops assumes FMA.
 """
 function attempt_symmetric_factorization!(
     L::SparseMatrixCSC{T},
@@ -289,6 +288,8 @@ function attempt_symmetric_factorization!(
     colptr = L.colptr
     rowval = L.rowval
     lval = L.nzval
+
+    flops = 0
 
     # Initialize
     @inbounds for j = 1:n
@@ -310,14 +311,17 @@ function attempt_symmetric_factorization!(
             L_col_k = lval[k_pos]  # L[col, k]
             D_k = D[k]
 
-            # Update diagonal
+            # Update diagonal: d_col -= L² * D  (1 mult + 1 FMA = 2 flops)
             d_col -= L_col_k * L_col_k * D_k
+            flops += 2
 
             # Update column: work[i] -= L[i,k] * D[k] * L[col,k]
-            L_col_k_D_k = L_col_k * D_k
+            L_col_k_D_k = L_col_k * D_k  # 1 mult
+            flops += 1
             for p = (k_pos+1):(colptr[k+1]-1)
-                work[rowval[p]] -= lval[p] * L_col_k_D_k
+                work[rowval[p]] -= lval[p] * L_col_k_D_k  # 1 FMA
             end
+            flops += colptr[k+1] - k_pos - 1
 
             # Advance and relink
             next_k = list[k]
@@ -333,11 +337,11 @@ function attempt_symmetric_factorization!(
         # Check pivot
         if ensure_positive
             if d_col <= min_pivot
-                return false, col
+                return false, col, flops
             end
         else
             if abs(d_col) < min_pivot
-                return false, col
+                return false, col, flops
             end
         end
         D[col] = d_col
@@ -345,9 +349,10 @@ function attempt_symmetric_factorization!(
         # Gather and normalize
         for p = colptr[col]:(colptr[col+1]-1)
             row = rowval[p]
-            lval[p] = work[row] / d_col
+            lval[p] = work[row] / d_col  # 1 div
             work[row] = zero(T)
         end
+        flops += colptr[col+1] - colptr[col]
 
         # Link this column to its first row
         if colptr[col] < colptr[col+1]
@@ -357,7 +362,7 @@ function attempt_symmetric_factorization!(
         end
     end
 
-    return true, 0
+    return true, 0, flops
 end
 
 # =============================================================================
