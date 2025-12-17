@@ -1,3 +1,10 @@
+"""
+    ILUK
+
+Incomplete LU and LDL^T factorizations with level-of-fill.
+
+API and adaptive shifting strategy inspired by LimitedLDLFactorizations.jl.
+"""
 module ILUK
 
 using SparseArrays
