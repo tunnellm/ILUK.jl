@@ -3,25 +3,27 @@ module ILUK
 using SparseArrays
 using LinearAlgebra
 
-# Core symbolic factorization
-include("symbolic_iluk.jl")        # General ILU(k) symbolic patterns
-include("fill_symbolic.jl")        # Initialize L,U with A values
+# All symbolic factorization routines (general + symmetric + initialization)
+include("symbolic_routines.jl")
 
-# Numerical factorization
-include("ilu_k_basic.jl")          # Standard Crout-based ILU(k)
-include("ilu_k_adaptive.jl")       # Adaptive shifting (LimitedLDL-inspired)
+# All numerical factorization routines (general + symmetric with adaptive shifting)
+include("numeric_routines.jl")
 
-# Symmetric factorization
-include("ldlt_k_symbolic.jl")      # Specialized symmetric symbolic patterns
-include("ldlt_k_basic.jl")         # Standard LDL^T factorization
+# Public API interface
+include("api.jl")
 
-# Public API
-include("ilu_k.jl")               # Main interface functions
+# Factorization types
+export LDLFactorization   # Symmetric factorization struct
+export LDUFactorization   # General factorization struct
 
-# Clean API - only 4 functions
-export symbolic_ilu_k  # General symbolic factorization
-export ilu_k          # General numerical factorization with adaptive shifting
-export symbolic_ldlt_k # Symmetric symbolic factorization
-export ldlt_k         # Symmetric numerical factorization with adaptive shifting
+# Factorization API
+export symbolic_ilu_k     # General symbolic factorization
+export ilu_k              # General numerical factorization with adaptive shifting
+export symbolic_cholesky  # Symmetric symbolic factorization
+export ldlt_k             # Symmetric numerical factorization with adaptive shifting
+
+# Solve API
+export ldl_solve!, ldl_solve   # Symmetric solve
+export ldu_solve!, ldu_solve   # General solve
 
 end # module ILUK
