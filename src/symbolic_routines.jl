@@ -43,11 +43,14 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
 
         L.nzval .= 1.0
         U.nzval .= 1.0
-        return L, U
+        # k=0: single pass through A to partition into L and U
+        graph_ops = nnz(A)
+        return L, U, graph_ops
     end
 
     n = size(A, 1)
     nnzA = nnz(A)
+    graph_ops = 0
 
     # 1) Build row-wise pattern of A (CSC -> CSR-like structure)
     # This is critical: we need to iterate over rows, not columns
@@ -57,12 +60,14 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
             row_counts[A.rowval[p]] += 1
         end
     end
+    graph_ops += nnzA  # 1 index read per nonzero
 
     row_ptr = Vector{Int}(undef, n + 1)
     row_ptr[1] = 1
     for i in 1:n
         row_ptr[i+1] = row_ptr[i] + row_counts[i]
     end
+    graph_ops += n  # prefix sum over n rows
 
     row_pattern = Vector{Int}(undef, nnzA)
     temp = zeros(Int, n)
@@ -74,6 +79,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
             temp[r] += 1
         end
     end
+    graph_ops += nnzA  # 1 index store per nonzero
 
     # 2) Workspace and counters
     countsL = zeros(Int, n)
@@ -92,6 +98,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
         # Seed BFS from original row pattern (ROW i of A)
         for idx in row_ptr[i]:(row_ptr[i+1]-1)
             c = row_pattern[idx]  # c is column index, A[i,c] is nonzero
+            graph_ops += 1  # read from row_pattern
             if level[c] == k + 1
                 touched_t += 1
                 touched[touched_t] = c
@@ -110,6 +117,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
             head += 1
             lvlj = level[j]
             for (w, wlvl) in zip(U_idx[j], U_lvl[j])
+                graph_ops += 1  # edge traversal: read from U_idx/U_lvl
                 new_lvl = lvlj + wlvl + 1
                 if new_lvl <= k && new_lvl < level[w]
                     if level[w] == k + 1
@@ -133,6 +141,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
         for t in 1:touched_t
             c = touched[t]
             lvl = level[c]
+            graph_ops += 1  # read touched entry
             if lvl <= k
                 if c < i
                     countsL[c] += 1
@@ -157,6 +166,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
                 pos += 1
                 Ui[pos] = c
                 Vi[pos] = lvl
+                graph_ops += 1  # store into U_idx/U_lvl
             end
             level[c] = k + 1  # Reset for next iteration
         end
@@ -173,6 +183,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
         L_colptr[j+1] = L_colptr[j] + countsL[j]
         U_colptr[j+1] = U_colptr[j] + countsU[j]
     end
+    graph_ops += 2 * n  # L and U colptr construction
     Lnnz = L_colptr[end] - 1
     Unnz = U_colptr[end] - 1
 
@@ -193,6 +204,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
         # Seed from row pattern
         for idx in row_ptr[i]:(row_ptr[i+1]-1)
             c = row_pattern[idx]
+            graph_ops += 1  # read from row_pattern
             if level[c] == k + 1
                 touched_t += 1
                 touched[touched_t] = c
@@ -211,6 +223,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
             head += 1
             lvlj = level[j]
             for (w, wlvl) in zip(U_idx[j], U_lvl[j])
+                graph_ops += 1  # edge traversal: read from U_idx/U_lvl
                 new_lvl = lvlj + wlvl + 1
                 if new_lvl <= k && new_lvl < level[w]
                     if level[w] == k + 1
@@ -230,16 +243,19 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
         for t in 1:touched_t
             c = touched[t]
             lvl = level[c]
+            graph_ops += 1  # read touched entry
             if lvl <= k
                 if c < i
                     p = nextL[c]
                     L_rowval[p] = i
                     nextL[c] += 1
+                    graph_ops += 1  # store into L CSC
                 end
                 if c > i
                     p = nextU[c]
                     U_rowval[p] = i
                     nextU[c] += 1
+                    graph_ops += 1  # store into U CSC
                 end
             end
             level[c] = k + 1
@@ -249,7 +265,7 @@ function symbolic_ilu_k(A::SparseMatrixCSC{<:Number}, k::Integer)
     # 6) Construct SparseMatrixCSC and return
     L = SparseMatrixCSC(n, n, L_colptr, L_rowval, L_vals)
     U = SparseMatrixCSC(n, n, U_colptr, U_rowval, U_vals)
-    return L, U
+    return L, U, graph_ops
 end
 
 export symbolic_ilu_k
@@ -282,10 +298,13 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
     if k == 0
         L = tril(A, -1)
         L.nzval .= 1
-        return L
+        # k=0: single pass through lower triangle of A
+        graph_ops = nnz(A) ÷ 2
+        return L, graph_ops
     end
 
     nnzA = nnz(A)
+    graph_ops = 0
 
     # Build row-wise pattern of A (once, O(nnz))
     row_counts = zeros(Int, n)
@@ -294,12 +313,14 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
             row_counts[A.rowval[p]] += 1
         end
     end
+    graph_ops += nnzA  # 1 index read per nonzero
 
     row_ptr = Vector{Int}(undef, n + 1)
     row_ptr[1] = 1
     @inbounds for i = 1:n
         row_ptr[i+1] = row_ptr[i] + row_counts[i]
     end
+    graph_ops += n  # prefix sum over n rows
 
     row_pattern = Vector{Int}(undef, nnzA)
     fill!(row_counts, 0)
@@ -310,6 +331,7 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
             row_counts[r] += 1
         end
     end
+    graph_ops += nnzA  # 1 index store per nonzero
 
     # Work arrays
     level = fill(k + 1, n)
@@ -327,6 +349,7 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
         # Seed from row i of A
         for rp = row_ptr[i]:(row_ptr[i+1]-1)
             c = row_pattern[rp]
+            graph_ops += 1  # read from row_pattern
             if level[c] == k + 1
                 touched_t += 1
                 touched[touched_t] = c
@@ -345,6 +368,7 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
             head += 1
             lvlj = level[j]
             for (w, wlvl) in zip(L_col[j], L_col_lvl[j])
+                graph_ops += 1  # edge traversal: read from L_col/L_col_lvl
                 new_lvl = lvlj + wlvl + 1
                 if new_lvl <= k && new_lvl < level[w]
                     if level[w] == k + 1
@@ -365,6 +389,7 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
         col_count = 0
         for t = 1:touched_t
             c = touched[t]
+            graph_ops += 1  # read touched entry
             if level[c] <= k && c >= i
                 col_count += 1
             end
@@ -380,6 +405,7 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
                 pos += 1
                 Li[pos] = c
                 Lv[pos] = lvl
+                graph_ops += 1  # store into L_col/L_col_lvl
             end
             level[c] = k + 1
         end
@@ -395,12 +421,14 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
         # Count entries > j (exclude diagonal)
         cnt = 0
         for r in L_col[j]
+            graph_ops += 1  # read from L_col during CSC construction
             if r > j
                 cnt += 1
             end
         end
         L_colptr[j+1] = L_colptr[j] + cnt
     end
+    graph_ops += n  # colptr prefix sum
     Lnnz = L_colptr[end] - 1
 
     L_rowval = Vector{Int}(undef, Lnnz)
@@ -413,14 +441,20 @@ function symbolic_cholesky(A::SparseMatrixCSC{T}, k::Integer) where {T}
         for r in L_col[j]
             if r > j
                 L_rowval[p] = r
+                graph_ops += 1  # store into L CSC
                 p += 1
             end
         end
         # Sort this column's row indices
-        sort!(view(L_rowval, p_start:(p-1)))
+        col_nnz = p - p_start
+        if col_nnz > 1
+            sort!(view(L_rowval, p_start:(p-1)))
+            # sort cost: n*log(n) comparisons
+            graph_ops += ceil(Int, col_nnz * log2(col_nnz))
+        end
     end
 
-    return SparseMatrixCSC(n, n, L_colptr, L_rowval, L_nzval)
+    return SparseMatrixCSC(n, n, L_colptr, L_rowval, L_nzval), graph_ops
 end
 
 """
@@ -442,12 +476,14 @@ function fill_symbolic_symmetric!(
     D::Vector{T},
 ) where {T}
     n = size(L, 1)
+    graph_ops = 0
 
     # Initialize D with diagonal of A
     for j = 1:n
         D[j] = T(0)  # Default value
         # Look for A[j,j]
         for idx = A.colptr[j]:(A.colptr[j+1]-1)
+            graph_ops += 1  # index read during diagonal search
             if A.rowval[idx] == j
                 D[j] = A.nzval[idx]
                 break
@@ -460,12 +496,14 @@ function fill_symbolic_symmetric!(
     for j = 1:n
         for idx_L = L.colptr[j]:(L.colptr[j+1]-1)
             i = L.rowval[idx_L]
+            graph_ops += 1  # index read from L
 
             # Look for A[i,j] (i > j since L is strictly lower triangular)
             found = false
 
             # Check column j of A for entry (i,j)
             for idx_A = A.colptr[j]:(A.colptr[j+1]-1)
+                graph_ops += 1  # index read during search in A[:,j]
                 if A.rowval[idx_A] == i
                     L.nzval[idx_L] = A.nzval[idx_A]
                     found = true
@@ -476,6 +514,7 @@ function fill_symbolic_symmetric!(
             # For symmetric matrix, also check column i for entry (j,i) = A[j,i] = A[i,j]
             if !found
                 for idx_A = A.colptr[i]:(A.colptr[i+1]-1)
+                    graph_ops += 1  # index read during search in A[:,i]
                     if A.rowval[idx_A] == j
                         L.nzval[idx_L] = A.nzval[idx_A]
                         found = true
@@ -490,7 +529,7 @@ function fill_symbolic_symmetric!(
         end
     end
 
-    return nothing
+    return graph_ops
 end
 
 # =============================================================================
@@ -510,6 +549,7 @@ function fill_symbolic!(
 ) where {T}
 
     n = size(A, 2)
+    graph_ops = 0
 
     Lc.nzval .= T(0)
     Uc.nzval .= T(0)
@@ -527,17 +567,20 @@ function fill_symbolic!(
         advance_l!(r) = begin
             while pl < pl_end && Lc.rowval[pl] < r
                 pl += 1
+                graph_ops += 1  # index read during advance
             end
         end
         advance_u!(r) = begin
             while pu < pu_end && Uc.rowval[pu] < r
                 pu += 1
+                graph_ops += 1  # index read during advance
             end
         end
 
         # ---------------------------------------------------------------------
         while pa < pa_end
             ra = A.rowval[pa]
+            graph_ops += 1  # index read from A
 
             if ra == j
                 # diagonal
@@ -559,7 +602,7 @@ function fill_symbolic!(
             pa += 1
         end
     end
-    return nothing
+    return graph_ops
 end
 
 function transpose_keepzeros(A::SparseMatrixCSC{T}) where {T}
@@ -570,11 +613,14 @@ function transpose_keepzeros(A::SparseMatrixCSC{T}) where {T}
     rowvalT = Vector{Int}(undef, nnzA)
     nzvalT = similar(A.nzval)
 
+    graph_ops = 0
+
     # pass 1 – count how many entries each output column will get
     fill!(colptrT, 0)
     @inbounds for r in A.rowval
         colptrT[r] += 1
     end
+    graph_ops += nnzA  # 1 index read per nonzero
 
     # cumulative sum → true column pointers
     s = 1
@@ -584,6 +630,7 @@ function transpose_keepzeros(A::SparseMatrixCSC{T}) where {T}
         s += t
     end
     colptrT[m+1] = nnzA + 1
+    graph_ops += m  # 1 store per column
 
     # work array that tracks next free slot in each column
     nextptr = copy(colptrT)
@@ -598,6 +645,7 @@ function transpose_keepzeros(A::SparseMatrixCSC{T}) where {T}
             nextptr[i] = q + 1
         end
     end
+    graph_ops += nnzA  # 1 index store per nonzero
 
-    return SparseMatrixCSC{T,Int}(n, m, colptrT, rowvalT, nzvalT)
+    return SparseMatrixCSC{T,Int}(n, m, colptrT, rowvalT, nzvalT), graph_ops
 end

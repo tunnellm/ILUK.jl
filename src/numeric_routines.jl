@@ -40,7 +40,8 @@ function numeric_ilu_k!(
     min_pivot::Real=T(1e-10),
     α::Real=T(0),
     α_increase_factor::Real=10.0,
-    max_attempts::Int=3
+    max_attempts::Int=3,
+    graph_ops::Int=0
 ) where {T}
 
     n = size(L, 1)
@@ -89,7 +90,7 @@ function numeric_ilu_k!(
         total_flops += flops
 
         if success
-            return (success=true, shift=α_current, attempts=attempt, failed_column=0, flops=total_flops)
+            return (success=true, shift=α_current, attempts=attempt, failed_column=0, flops=total_flops, graph_ops=graph_ops)
         end
 
         # Factorization failed, increase shift
@@ -97,7 +98,7 @@ function numeric_ilu_k!(
         attempt += 1
     end
 
-    return (success=false, shift=α_current, attempts=attempt, failed_column=-1, flops=total_flops)
+    return (success=false, shift=α_current, attempts=attempt, failed_column=-1, flops=total_flops, graph_ops=graph_ops)
 end
 
 """
@@ -202,7 +203,8 @@ function numeric_ldlt_k!(
     α::Real=T(0),
     α_increase_factor::Real=10.0,
     max_attempts::Int=3,
-    ensure_positive::Bool=false
+    ensure_positive::Bool=false,
+    graph_ops::Int=0
 ) where {T}
 
     n = size(L, 1)
@@ -253,7 +255,7 @@ function numeric_ldlt_k!(
 
         if success
             return (success=true, shift=α_current, attempts=attempt,
-                   failed_column=0, all_positive=all(D .> 0), flops=total_flops)
+                   failed_column=0, all_positive=all(D .> 0), flops=total_flops, graph_ops=graph_ops)
         end
 
         # Factorization failed, increase shift
@@ -262,7 +264,7 @@ function numeric_ldlt_k!(
     end
 
     return (success=false, shift=α_current, attempts=attempt,
-           failed_column=-1, all_positive=false, flops=total_flops)
+           failed_column=-1, all_positive=false, flops=total_flops, graph_ops=graph_ops)
 end
 
 """

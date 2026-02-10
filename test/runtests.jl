@@ -38,12 +38,12 @@ using LinearAlgebra
         A = spdiagm(-1 => off, 0 => diag, 1 => off)
 
         @testset "Level 0" begin
-            L = symbolic_cholesky(A, 0)
+            L, graph_ops = symbolic_cholesky(A, 0)
             @test nnz(L) == n - 1  # Strictly lower: one subdiagonal
         end
 
         @testset "Level 1" begin
-            L = symbolic_cholesky(A, 1)
+            L, graph_ops = symbolic_cholesky(A, 1)
             @test nnz(L) >= n - 1
         end
     end

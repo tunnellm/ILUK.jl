@@ -20,6 +20,7 @@ Fields:
 - `shift`: Diagonal shift applied (0 if none needed)
 - `success`: Whether factorization succeeded
 - `flops`: Total floating-point operations (assuming FMA)
+- `graph_ops`: Total graph operations (index loads/stores)
 """
 struct LDLFactorization{T}
     L::SparseMatrixCSC{T,Int}
@@ -27,6 +28,7 @@ struct LDLFactorization{T}
     shift::T
     success::Bool
     flops::Int
+    graph_ops::Int
 end
 
 """
@@ -42,6 +44,7 @@ Fields:
 - `shift`: Diagonal shift applied (0 if none needed)
 - `success`: Whether factorization succeeded
 - `flops`: Total floating-point operations (assuming FMA)
+- `graph_ops`: Total graph operations (index loads/stores)
 """
 struct LDUFactorization{T}
     L::SparseMatrixCSC{T,Int}
@@ -50,6 +53,7 @@ struct LDUFactorization{T}
     shift::T
     success::Bool
     flops::Int
+    graph_ops::Int
 end
 
 # =============================================================================
@@ -91,23 +95,24 @@ function ilu_k(A::SparseMatrixCSC{T}, k::Integer;
     n = size(A, 1)
 
     # Step 1: Compute symbolic pattern
-    L, U = symbolic_ilu_k(A, k)
+    L, U, graph_ops = symbolic_ilu_k(A, k)
 
     # Step 2: Initialize D and fill with values from A
     D = zeros(T, n)
-    fill_symbolic!(A, L, U, D)
+    graph_ops += fill_symbolic!(A, L, U, D)
 
     # Step 3: Perform numerical factorization with adaptive shifting
     result = numeric_ilu_k!(L, U, D;
                                    min_pivot=min_pivot,
                                    α=α,
                                    α_increase_factor=α_increase_factor,
-                                   max_attempts=max_attempts)
+                                   max_attempts=max_attempts,
+                                   graph_ops=graph_ops)
     if !result.success
         @warn "Adaptive factorization failed after $(result.attempts) attempts with final shift $(result.shift)"
     end
 
-    return LDUFactorization(L, D, U, result.shift, result.success, result.flops)
+    return LDUFactorization(L, D, U, result.shift, result.success, result.flops, result.graph_ops)
 end
 
 """
@@ -145,12 +150,12 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
                ensure_positive::Bool=false) where {T}
 
     # Step 1: Compute symbolic pattern (only L)
-    L = symbolic_cholesky(A, k)
+    L, graph_ops = symbolic_cholesky(A, k)
 
     # Step 2: Initialize D and fill with values from A
     n = size(A, 1)
     D = zeros(T, n)
-    fill_symbolic_symmetric!(A, L, D)
+    graph_ops += fill_symbolic_symmetric!(A, L, D)
 
     # Step 3: Perform numerical factorization with adaptive shifting
     result = numeric_ldlt_k!(L, D;
@@ -158,12 +163,13 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
                                    α=α,
                                    α_increase_factor=α_increase_factor,
                                    max_attempts=max_attempts,
-                                   ensure_positive=ensure_positive)
+                                   ensure_positive=ensure_positive,
+                                   graph_ops=graph_ops)
     if !result.success
         @warn "Adaptive symmetric factorization failed after $(result.attempts) attempts with final shift $(result.shift)"
     end
 
-    return LDLFactorization(L, D, result.shift, result.success, result.flops)
+    return LDLFactorization(L, D, result.shift, result.success, result.flops, result.graph_ops)
 end
 
 # =============================================================================
