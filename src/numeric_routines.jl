@@ -232,6 +232,7 @@ function numeric_ldlt_k!(
     α_current = T(α)
     attempt = 0
     total_flops = 0
+    total_graph_ops = graph_ops  # Start with graph_ops from symbolic phase
 
     while attempt <= max_attempts
         # Reset to original values
@@ -250,12 +251,13 @@ function numeric_ldlt_k!(
         end
 
         # Attempt factorization (zero allocations inside)
-        success, failed_column, flops = attempt_symmetric_factorization!(L, D, min_pivot, ensure_positive, work, list, indf)
+        success, failed_column, flops, fact_graph_ops = attempt_symmetric_factorization!(L, D, min_pivot, ensure_positive, work, list, indf)
         total_flops += flops
+        total_graph_ops += fact_graph_ops
 
         if success
             return (success=true, shift=α_current, attempts=attempt,
-                   failed_column=0, all_positive=all(D .> 0), flops=total_flops, graph_ops=graph_ops)
+                   failed_column=0, all_positive=all(D .> 0), flops=total_flops, graph_ops=total_graph_ops)
         end
 
         # Factorization failed, increase shift
@@ -264,7 +266,7 @@ function numeric_ldlt_k!(
     end
 
     return (success=false, shift=α_current, attempts=attempt,
-           failed_column=-1, all_positive=false, flops=total_flops, graph_ops=graph_ops)
+           failed_column=-1, all_positive=false, flops=total_flops, graph_ops=total_graph_ops)
 end
 
 """
@@ -274,7 +276,7 @@ Attempt symmetric LDL^T factorization. Zero allocations.
 L is strictly lower triangular (no diagonal), D is the diagonal.
 Uses linked-list approach from LimitedLDLFactorizations.
 
-Returns (success, failed_column, flops) where flops assumes FMA.
+Returns (success, failed_column, flops, graph_ops) where flops assumes FMA.
 """
 function attempt_symmetric_factorization!(
     L::SparseMatrixCSC{T},
@@ -292,6 +294,7 @@ function attempt_symmetric_factorization!(
     lval = L.nzval
 
     flops = 0
+    graph_ops = 0
 
     # Initialize
     @inbounds for j = 1:n
@@ -309,6 +312,7 @@ function attempt_symmetric_factorization!(
         d_col = D[col]
         k = list[col]
         while k != 0
+            graph_ops += 1  # read from indf[k]
             k_pos = indf[k]
             L_col_k = lval[k_pos]  # L[col, k]
             D_k = D[k]
@@ -326,12 +330,14 @@ function attempt_symmetric_factorization!(
             flops += colptr[k+1] - k_pos - 1
 
             # Advance and relink
+            graph_ops += 1  # read next_k from list[k]
             next_k = list[k]
             indf[k] += 1
             if indf[k] < colptr[k+1]
                 next_row = rowval[indf[k]]
                 list[k] = list[next_row]
                 list[next_row] = k
+                graph_ops += 3  # linked list relink: 1 read + 2 stores
             end
             k = next_k
         end
@@ -339,11 +345,11 @@ function attempt_symmetric_factorization!(
         # Check pivot
         if ensure_positive
             if d_col <= min_pivot
-                return false, col, flops
+                return false, col, flops, graph_ops
             end
         else
             if abs(d_col) < min_pivot
-                return false, col, flops
+                return false, col, flops, graph_ops
             end
         end
         D[col] = d_col
@@ -361,10 +367,11 @@ function attempt_symmetric_factorization!(
             first_row = rowval[colptr[col]]
             list[col] = list[first_row]
             list[first_row] = col
+            graph_ops += 2  # linked list setup: 2 stores
         end
     end
 
-    return true, 0, flops
+    return true, 0, flops, graph_ops
 end
 
 # =============================================================================
