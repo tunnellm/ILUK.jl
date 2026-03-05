@@ -19,6 +19,7 @@ Fields:
 - `D`: Diagonal vector
 - `shift`: Diagonal shift applied (0 if none needed)
 - `success`: Whether factorization succeeded
+- `num_retries`: Number of shift increases performed
 - `flops`: Total floating-point operations (assuming FMA)
 - `graph_ops`: Total graph operations (marker sets, linked list ops, fill-in, sorting)
 - `solve_flops`: Floating-point operations per solve (2*nnz(L) + n)
@@ -28,6 +29,7 @@ struct LDLFactorization{T}
     D::Vector{T}
     shift::T
     success::Bool
+    num_retries::Int
     flops::Int
     graph_ops::Int
     solve_flops::Int
@@ -45,6 +47,7 @@ Fields:
 - `U`: Strictly upper triangular factor (SparseMatrixCSC)
 - `shift`: Diagonal shift applied (0 if none needed)
 - `success`: Whether factorization succeeded
+- `num_retries`: Number of shift increases performed
 - `flops`: Total floating-point operations (assuming FMA)
 - `graph_ops`: Total graph operations (marker sets, linked list ops, fill-in, sorting)
 - `solve_flops`: Floating-point operations per solve (nnz(L) + n + nnz(U))
@@ -55,6 +58,7 @@ struct LDUFactorization{T}
     U::SparseMatrixCSC{T,Int}
     shift::T
     success::Bool
+    num_retries::Int
     flops::Int
     graph_ops::Int
     solve_flops::Int
@@ -119,7 +123,7 @@ function ilu_k(A::SparseMatrixCSC{T}, k::Integer;
     # Solve flops: forward (nnz(L) FMAs) + diag (n divs) + backward (nnz(U) FMAs)
     solve_flops = result.success ? nnz(L) + n + nnz(U) : 0
 
-    return LDUFactorization(L, D, U, result.shift, result.success, result.flops, result.graph_ops, solve_flops)
+    return LDUFactorization(L, D, U, result.shift, result.success, result.attempts, result.flops, result.graph_ops, solve_flops)
 end
 
 """
@@ -179,7 +183,7 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
     # Solve flops: forward (nnz(L) FMAs) + diag (n divs) + backward (nnz(L) FMAs)
     solve_flops = result.success ? 2 * nnz(L) + n : 0
 
-    return LDLFactorization(L, D, result.shift, result.success, result.flops, result.graph_ops, solve_flops)
+    return LDLFactorization(L, D, result.shift, result.success, result.attempts, result.flops, result.graph_ops, solve_flops)
 end
 
 # =============================================================================
