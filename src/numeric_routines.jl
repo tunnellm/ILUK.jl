@@ -198,11 +198,13 @@ Symmetric LDL^T factorization with LimitedLDL-inspired shift strategy.
 function numeric_ldlt_k!(
     L::SparseMatrixCSC{T},
     D::Vector{T};
-    min_pivot::Real=T(1e-10),
+    min_pivot::Real=sqrt(eps(T))/2,
     α::Real=T(0),
     α_increase_factor::Real=10.0,
     max_attempts::Int=3,
-    ensure_positive::Bool=false
+    ensure_positive::Bool=false,
+    gmw_beta::Real=T(0),
+    lookahead::Bool=false
 ) where {T}
 
     n = size(L, 1)
@@ -247,7 +249,8 @@ function numeric_ldlt_k!(
         end
 
         # Attempt factorization (zero allocations inside)
-        success, failed_column = attempt_symmetric_factorization!(L, D, min_pivot, ensure_positive, work, list, indf)
+        success, failed_column = attempt_symmetric_factorization!(L, D, min_pivot, ensure_positive, work, list, indf;
+                                                                   gmw_beta=gmw_beta, lookahead=lookahead)
 
         if success
             return (success=true, shift=α_current, attempts=attempt,
@@ -282,7 +285,9 @@ function attempt_symmetric_factorization!(
     ensure_positive::Bool,
     work::Vector{T},
     list::Vector{Int},
-    indf::Vector{Int}
+    indf::Vector{Int};
+    gmw_beta::Real=T(0),
+    lookahead::Bool=false
 ) where {T}
 
     n = size(L, 1)
@@ -330,7 +335,24 @@ function attempt_symmetric_factorization!(
             k = next_k
         end
 
-        # Check pivot
+        # GMW(β) local modification: inflate pivot if too small relative to off-diagonals
+        if gmw_beta > 0
+            # Find max absolute off-diagonal in this column (from work array)
+            lmax = zero(T)
+            for p = colptr[col]:(colptr[col+1]-1)
+                v = abs(work[rowval[p]])
+                v > lmax && (lmax = v)
+            end
+            gmw_threshold = (lmax / T(gmw_beta))^2
+            if d_col < gmw_threshold
+                d_col = gmw_threshold
+            end
+        end
+
+        # Check pivot (also catches NaN from LDM overflow)
+        if !isfinite(d_col)
+            return false, col
+        end
         if ensure_positive
             if d_col <= min_pivot
                 return false, col
@@ -347,6 +369,25 @@ function attempt_symmetric_factorization!(
             row = rowval[p]
             lval[p] = work[row] / d_col
             work[row] = zero(T)
+        end
+
+        # Look-ahead: after normalizing column col, check future diagonals
+        # that will be affected by this column's entries. If any would go
+        # below min_pivot, flag B1 breakdown early.
+        if lookahead
+            for p = colptr[col]:(colptr[col+1]-1)
+                row = rowval[p]
+                future_d = D[row] - lval[p] * lval[p] * d_col
+                if ensure_positive
+                    if future_d <= min_pivot
+                        return false, col
+                    end
+                else
+                    if abs(future_d) < min_pivot
+                        return false, col
+                    end
+                end
+            end
         end
 
         # Link this column to its first row

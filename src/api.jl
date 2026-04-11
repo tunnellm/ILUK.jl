@@ -103,7 +103,7 @@ function ilu_k(A::SparseMatrixCSC{T}, k::Integer;
         @warn "Adaptive factorization failed after $(result.attempts) attempts with final shift $(result.shift)"
     end
 
-    return LDUFactorization(L, D, U, result.shift, result.success)
+    return LDUFactorization(L, D, U, T(result.shift), result.success)
 end
 
 """
@@ -138,7 +138,9 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
                α::Real=T(0),
                α_increase_factor::Real=10.0,
                max_attempts::Int=3,
-               ensure_positive::Bool=false) where {T}
+               ensure_positive::Bool=false,
+               gmw_beta::Real=T(0),
+               lookahead::Bool=false) where {T}
 
     # Step 1: Compute symbolic pattern (only L)
     L = symbolic_cholesky(A, k)
@@ -154,12 +156,14 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
                                    α=α,
                                    α_increase_factor=α_increase_factor,
                                    max_attempts=max_attempts,
-                                   ensure_positive=ensure_positive)
+                                   ensure_positive=ensure_positive,
+                                   gmw_beta=gmw_beta,
+                                   lookahead=lookahead)
     if !result.success
         @warn "Adaptive symmetric factorization failed after $(result.attempts) attempts with final shift $(result.shift)"
     end
 
-    return LDLFactorization(L, D, result.shift, result.success)
+    return LDLFactorization(L, D, T(result.shift), result.success)
 end
 
 # =============================================================================
