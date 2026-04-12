@@ -134,9 +134,10 @@ x = F \\ b  # Solve using the factorization
 ```
 """
 function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
-               min_pivot::Real=T(1e-10),
+               min_pivot::Real=sqrt(eps(T))/2,
                α::Real=T(0),
                α_increase_factor::Real=10.0,
+               α_min::Real=sqrt(eps(T)),
                max_attempts::Int=3,
                ensure_positive::Bool=false,
                gmw_beta::Real=T(0),
@@ -155,6 +156,7 @@ function ldlt_k(A::SparseMatrixCSC{T}, k::Integer;
                                    min_pivot=min_pivot,
                                    α=α,
                                    α_increase_factor=α_increase_factor,
+                                   α_min=α_min,
                                    max_attempts=max_attempts,
                                    ensure_positive=ensure_positive,
                                    gmw_beta=gmw_beta,

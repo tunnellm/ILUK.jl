@@ -201,6 +201,7 @@ function numeric_ldlt_k!(
     min_pivot::Real=sqrt(eps(T))/2,
     α::Real=T(0),
     α_increase_factor::Real=10.0,
+    α_min::Real=sqrt(eps(T)),
     max_attempts::Int=3,
     ensure_positive::Bool=false,
     gmw_beta::Real=T(0),
@@ -208,9 +209,6 @@ function numeric_ldlt_k!(
 ) where {T}
 
     n = size(L, 1)
-
-    # Minimum shift floor (from LimitedLDLFactorizations)
-    α_min = sqrt(eps(T))
 
     # Save original values
     L_orig = copy(L.nzval)
